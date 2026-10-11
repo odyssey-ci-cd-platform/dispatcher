@@ -12,8 +12,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/bus"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/bus"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
 )
 
 const (

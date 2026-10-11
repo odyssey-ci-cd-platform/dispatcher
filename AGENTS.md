@@ -1,4 +1,4 @@
-# odyssey-core-agent
+# dispatcher
 
 Language-agnostic, configuration-driven CI/CD execution engine (Go rewrite) plus a thin gRPC agent daemon. **Read `README.md` first** for architecture, design principles, roadmap, and open questions — it's a maintained design doc, not stale docs. Don't duplicate its content here; this file is operational notes only.
 
@@ -48,7 +48,7 @@ Language-agnostic, configuration-driven CI/CD execution engine (Go rewrite) plus
 
 ## Gotchas
 
-- `go.mod` module path is `bitbucket.org/odyssey-ci/odyssey-core-agent` but `origin` remote is GitHub (`odyssey-ci-cd-platform` org) — leftover from a prior host migration (see `ODYS-7`). This is intentional as-is, not a bug to fix.
+- Module path is `github.com/odyssey-ci-cd-platform/dispatcher`, matching the GitHub repo `dispatcher` (`odyssey-ci-cd-platform` org) — aligned by gh-87. This reverses the recorded ODYS-7 decision to keep the legacy `bitbucket.org/odyssey-ci/odyssey-core-agent` path; the old path no longer appears anywhere in the repo.
 
 ## Conventions
 

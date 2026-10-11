@@ -1,8 +1,8 @@
 package server
 
 import (
-	odysseyv1 "bitbucket.org/odyssey-ci/odyssey-core-agent/gen/proto/v1"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
+	odysseyv1 "github.com/odyssey-ci-cd-platform/dispatcher/gen/proto/v1"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
 )
 
 // domainStatusToProto maps a domain.Status to the corresponding protobuf

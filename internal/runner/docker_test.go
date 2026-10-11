@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/runner"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/runner"
 )
 
 // recordingSink is a StepSink that records events in memory.

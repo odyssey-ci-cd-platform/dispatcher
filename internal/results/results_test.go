@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/results"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/results"
 )
 
 // runEvents returns the lifecycle event sequence the orchestrator emits

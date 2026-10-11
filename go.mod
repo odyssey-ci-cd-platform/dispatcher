@@ -1,4 +1,4 @@
-module bitbucket.org/odyssey-ci/odyssey-core-agent
+module github.com/odyssey-ci-cd-platform/dispatcher
 
 go 1.26.4
 

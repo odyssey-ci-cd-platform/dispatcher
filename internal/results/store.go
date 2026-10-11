@@ -16,7 +16,7 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
 )
 
 //go:embed migrations/*.sql
