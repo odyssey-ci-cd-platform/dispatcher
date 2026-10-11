@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	odysseyv1 "bitbucket.org/odyssey-ci/odyssey-core-agent/gen/proto/v1"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/runner"
+	odysseyv1 "github.com/odyssey-ci-cd-platform/dispatcher/gen/proto/v1"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/runner"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"

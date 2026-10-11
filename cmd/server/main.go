@@ -13,13 +13,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
-	odysseyv1 "bitbucket.org/odyssey-ci/odyssey-core-agent/gen/proto/v1"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/bus"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/consumer"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/orchestrator"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/results"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/runner"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/server"
+	odysseyv1 "github.com/odyssey-ci-cd-platform/dispatcher/gen/proto/v1"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/bus"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/consumer"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/orchestrator"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/results"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/runner"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/server"
 )
 
 // listenAddr returns the address the gRPC server binds. It defaults to

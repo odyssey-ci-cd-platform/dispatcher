@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/config"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/config"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
 )
 
 // writeOdysseyConfig creates a .odyssey directory under dir, writes

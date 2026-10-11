@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
 )
 
 func TestStepFinishedEventCarriesOutcomeMetadata(t *testing.T) {

@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"os"
 
-	odysseyv1 "bitbucket.org/odyssey-ci/odyssey-core-agent/gen/proto/v1"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/config"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/orchestrator"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/runner"
+	odysseyv1 "github.com/odyssey-ci-cd-platform/dispatcher/gen/proto/v1"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/config"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/orchestrator"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/runner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

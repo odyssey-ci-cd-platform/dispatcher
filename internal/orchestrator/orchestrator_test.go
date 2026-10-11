@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/domain"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/orchestrator"
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/runner"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/domain"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/orchestrator"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/runner"
 )
 
 // fakeRunner is a Runner that returns pre-configured results keyed by job name.

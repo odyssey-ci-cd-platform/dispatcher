@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/common"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/common"
 )
 
 func TestContextLogger(t *testing.T) {

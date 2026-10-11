@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"bitbucket.org/odyssey-ci/odyssey-core-agent/internal/common"
+	"github.com/odyssey-ci-cd-platform/dispatcher/internal/common"
 )
 
 func TestCreateTar(t *testing.T) {
