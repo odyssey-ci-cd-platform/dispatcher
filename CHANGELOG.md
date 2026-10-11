@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - CI workflow running `make check` on every PR and push to main; branch protection on main requires the `check` status and pull requests.
 
 ### Changed
+- README rewritten to cover only the dispatcher; the platform-wide Odyssey design document (component map, product goals, business model, cross-service roadmap) moved out of the repository to the local odyssey workspace as `odyssey-design.md`.
 - Renamed the repository to `dispatcher` and aligned the Go module path to `github.com/odyssey-ci-cd-platform/dispatcher`, reversing the ODYS-7 keep-the-Bitbucket-path decision ahead of the pivot's dispatcher slices (gh-87).
 - Step finished payloads add `exit_code` and `duration_ms`, and job started payloads add `stage`, so the recorder can fill its schema; stdout/stderr content stays off the bus (gh-85).
 - The event bus E2E smoke also asserts the run lands in the results database, and passes a localhost `ODYSSEY_ADDR` — a bare port stopped parsing when gh-74 made the variable verbatim (gh-85).

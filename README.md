@@ -1,36 +1,17 @@
-# Odyssey — Design Document
+# Dispatcher
 
 **Author:** Sarthak
-**Date:** 2026-07-18
+**Date:** 2026-10-11 (platform content moved out; this README now covers only this repository)
 
 ## Overview
 
-Odyssey is a language-agnostic, configuration-driven CI/CD testing platform.
+Dispatcher is a language-agnostic, configuration-driven CI/CD execution engine written in Go, exposed over a gRPC interface.
 
-The core bet is that pipeline execution itself is a commodity - every CI vendor already does it adequately. The differentiated value is an **intelligence layer** sitting on top of execution results: per-test flakiness detection, test ownership tracking, and trend analytics. No surveyed competitor (GitHub Actions, GitLab CI, CircleCI, Tangled Spindles) offers this natively.
+Given a resolved pipeline config, it runs jobs and steps, manages one container per job (Docker SDK: a long-running `tail -f /dev/null` container with each step executed via `exec`), captures stdout/stderr separately, and returns structured results.
 
-Design effort is deliberately weighted away from infrastructure plumbing (networking, registries, DAG scheduling) and toward the intelligence layer, since the former commoditizes the product and the latter is the moat.
+It has no knowledge of orchestrators, queues, or the hosted platform — it is a pure execution library behind the gRPC surface, and a passive request/response executor: lifecycle concerns (heartbeats, retries, result streaming) belong to the caller, not the engine (gh-16).
 
-## Goals and non-goals
-
-### Goals
-
-- Run test/build pipelines defined in a simple, language-agnostic TOML config.
-- Detect flaky tests automatically, without manual annotation.
-- Track test ownership over time.
-- Surface trend analytics (pass rate, duration, flakiness) per test, per service, per team.
-- Ship as open core: free self-hostable base, paid hosted tier for the intelligence features, SSO/RBAC, and managed infra.
-
-### Non-goals (for now)
-
-- Competing on execution sophistication (DAG scheduling, exotic caching, marketplace of actions).
-- Being a general-purpose workflow engine.
-- Security scanning as a first-class product surface (CVE scanning may exist eventually as an add-on, not a pillar).
-
-## Business model
-
-- Open core. Free OSS base (engine + CLI + basic orchestration), paid hosted tier for: intelligence layer (flakiness, ownership, analytics), SSO/RBAC, managed infrastructure.
-- Licensing leaning toward AGPL v3, to prevent a hosted competitor from forking the OSS base without reciprocation.
+Platform-level design is maintained outside this repository, currently as `odyssey-design.md` in the local odyssey workspace directory next to the checkouts.
 
 ## Design principles
 
@@ -38,187 +19,79 @@ Design effort is deliberately weighted away from infrastructure plumbing (networ
 - Functions over classes when no state is needed.
 - Language-agnostic: no hardcoded toolchain assumptions baked into the engine.
 - Config lives in a `.odyssey/` folder per project, in TOML.
-- Defer infrastructure plumbing complexity (networking, registries, exotic scheduling) to protect focus on the intelligence layer.
 - Prefer direct, slightly repetitive call sites over an abstraction that doesn't earn its weight.
 - Schema fields should be minimal and orthogonal; contradictory combinations get rejected at validation time, not silently accepted.
 - Fail-fast between stages: the first Failed or Errored stage ends the run, and later stages are skipped — recorded decision (gh-82, AUD-015).
 
 ## Architecture
 
-### Layers
+### Run flow
 
-- **odyssey-core** — the execution engine. Given a resolved pipeline config, it runs jobs and steps, manages containers per job (Docker SDK: a per-job container running `tail -f /dev/null`, each step executed via `exec`), captures stdout/stderr separately, and returns structured results. It has no knowledge of orchestrators, queues, or the hosted platform - it is a pure execution library, exposed over a **gRPC interface**.
-- **Agent** — a thin daemon that runs alongside odyssey-core on each hosted runner node. It receives job assignment from the orchestrator, invokes odyssey-core over gRPC to actually execute the work, and streams results/heartbeats back out. All internal calls to odyssey-core go through this gRPC interface — not through a CLI.
-- **CLI** (`odyssey-cli`) — a thin gRPC client for humans, wrapping odyssey-core for local, one-off runs. Deprioritized: not a near-term build target, and not on the critical path for hosted execution. Ships later, once the Go rewrite and hosted platform are stable.
+- A pipeline is defined in `.odyssey/pipeline.toml`, loaded and validated by the config package.
+- The orchestrator runs stages sequentially and jobs within a stage concurrently.
+- The runner manages one Docker container per job and executes each step as a fresh shell invocation via `docker exec`.
+- Results flow back as structured `JobResult` values with `Status` precedence applied.
+- The gRPC server exposes the engine; when enabled, lifecycle events fan out to the event bus and a durable run history lands in the results database.
 
-### Component map
+### Packages
 
-- **User** pushes code to **Git repo**.
-- A git hook notifies the **Orchestrator**.
-- Orchestrator schedules jobs onto the **Cluster**, a pool of **Runners**. Each runner is [Agent + odyssey-core], talking to each other over gRPC.
-- Runners emit results to two separate sinks:
-  - **Event bus** — ephemeral, real-time pub/sub fan-out to reactive consumers.
-  - **Results DB** — durable, queryable store for historical trend analysis.
-- Results DB pushes build status back to the Orchestrator (commit status update).
-- Downstream consumers subscribe to the event bus (and, where historical data matters, query the results DB directly):
-  - **notificationService**
-  - **loggingService**
-  - **dataVizService**
-  - **testAnalysisService** — flakiness detection, test ownership.
-- testAnalysisService flags interesting failures (new failures, high flakiness score) to the **AI engine**, whose sole job is to generate a human-readable failure explanation. It is not a general-purpose service and is not wired into the main fan-out.
-- All consumer output rides **Streaming** back to the **Odyssey UI**, which the user interacts with directly (not only via git push).
+- `internal/config` — TOML pipeline/env config loading (`.odyssey/pipeline.toml`, `.odyssey/env.toml`).
+- `internal/domain` — core types: `Pipeline`, `JobResult`, `Status` (Error > Failed > Pending > Passed precedence).
+- `internal/orchestrator` — runs stages sequentially, jobs within a stage concurrently.
+- `internal/runner` — Docker execution (`docker.go`), cross-step env-file convention (`envfile.go`, `$ODYSSEY_ENV_FILE`).
+- `internal/server` — gRPC server exposing the execution engine.
+- `internal/bus` — event bus client and emission (Redis Streams, ADR 0001).
+- `internal/results` — results recorder writing run/job/step history (embedded SQLite, ADR 0002).
+- `internal/consumer` — event consumers (e.g. `events-logger`).
+- `internal/common` — logging, shared utils.
+- `api/v1/odyssey.proto` / `gen/proto/v1` — gRPC service definition and generated code (generated, never hand-edit `gen/`).
 
-#### Deferred / future components
-
-- **CVE scan** — a pre-execution gate on the Orchestrator (scan images/dependencies before scheduling a job). Deliberately kept out of the results-fan-out path; it's a different concern (security gate) than result analysis, and not part of the core moat. Schema/complexity deferred.
-
-- **CLI** — see above.
-
-### Diagram
-
-```mermaid
-flowchart TD
-    user((User))
-    git[Git repo]
-    orch[Orchestrator]
-    cli[CLI\nfuture - thin gRPC client]
-
-    subgraph cluster [Cluster]
-        runner[Runner\nAgent + odyssey-core, gRPC]
-    end
-
-    cve[CVE scan\nfuture pre-exec gate]
-
-    bus[(Event bus)]
-    db[(Results DB)]
-
-    notif[notificationService]
-    log[loggingService]
-    viz[dataVizService]
-    test[testAnalysisService\nflakiness, ownership]
-    ai[AI engine\nfailure explanations]
-
-    stream[Streaming]
-    ui[Odyssey UI]
-
-    user -->|pushes code| git
-    git -->|git hook| orch
-    orch -->|schedules jobs| runner
-    cve -.->|future gate| orch
-    cli -.->|gRPC, local runs| runner
-
-    runner --> bus
-    runner --> db
-    db -.->|status| orch
-
-    bus --> notif
-    bus --> log
-    bus --> viz
-    bus --> test
-    db --> test
-
-    test -->|flagged only| ai
-
-    notif --> stream
-    log --> stream
-    viz --> stream
-    test --> stream
-    ai --> stream
-
-    stream <--> ui
-    ui <--> user
-```
-
-## Component details
-
-### Server environment variables (odyssey-core)
+### Server environment variables
 
 - `ODYSSEY_ADDR` — the address the gRPC server binds, used verbatim (`:50051`, `host:50051`). Unset, the server binds `localhost:50051`, so an unconfigured server is not reachable from the network (AUD-005).
 - `ODYSSEY_PROJECT_ROOT` — when set, every request's `project_path` must resolve under this directory; requests outside it are rejected. Unset, paths are unrestricted, which is the local-development posture (AUD-005).
 - `ODYSSEY_REDIS_ADDR` — enables the event bus when set; without it the server runs with the bus disabled (ADR 0001).
 - `ODYSSEY_RESULTS_DB` — the results database file, used when the bus is enabled; the server's in-process recorder is the only writer (ADR 0002). Unset, `odyssey-results.db` in the working directory. An unopenable database fails startup: a server that cannot record history must not pretend it will.
 
-### Execution model (odyssey-core)
+## Execution model
 
 - Each step (`exec_run`) is a fresh shell invocation inside the job's container; shell state does **not** persist between steps. Only filesystem state persists.
-- Cross-step environment variable persistence is an open design question. Recommended approach: an env-file convention (e.g. `/tmp/.odyssey_env`), modeled on GitHub Actions' `$GITHUB_ENV`, read and merged before each subsequent `exec_run`.
-- Stderr is **not** reliably "the error" — many tools write diagnostics to stderr on success. `execCommand` returns `(domain.ExitCode, stdout, stderr, error)` as four separate values rather than conflating stderr with failure.
+- Cross-step environment variable persistence uses the env-file convention: a step appends `KEY=value` lines to the file exposed as `$ODYSSEY_ENV_FILE` (`/tmp/.odyssey_env`), and subsequent steps receive those vars — modeled on GitHub Actions' `$GITHUB_ENV`. Later values win, matching shell append order.
+- Stderr is **not** reliably "the error" — many tools write diagnostics to stderr on success. Execution returns exit code, stdout, stderr, and error as four separate values rather than conflating stderr with failure.
+- Docker already handles local image caching; caching container instances is unnecessary.
 - Deferred cleanup (container teardown) uses an independent context — `context.WithoutCancel(ctx)` plus its own `context.WithTimeout` — so a cancelled or timed-out parent context doesn't silently leak containers.
 
-### Result model
+## Result model
 
 - `StatusErrored` (infrastructure failure: setup/teardown broke) is distinct from `StatusFailed` (the step ran and exited nonzero) and `StatusPending`.
 - `JobResult` carries a `SetupErr` field for infra failures specifically.
 - Aggregation uses a `worstStatus` helper with precedence Error > Failed > Pending > Passed.
 
-### Event bus vs. results DB
+## Event bus vs. results DB
 
 Deliberately two sinks with different semantics, not one box doing both jobs:
 
-- Event bus: ephemeral, multi-consumer, real-time. **Decided: Redis Streams for v1** — see [ADR 0001](docs/adr/0001-event-bus-technology.md) for the trade-off analysis (Kafka rejected as ops-heavy; NATS JetStream kept as the growth path).
-- Results DB: durable, queryable, the source of truth for flakiness/trend analysis over time. **Decided: embedded SQLite for v1** — see [ADR 0002](docs/adr/0002-results-db-technology.md) for the trade-off analysis (Postgres deferred as the documented growth path; a single results-recorder consumer is the only writer).
+- Event bus: ephemeral, multi-consumer, real-time. Decided: Redis Streams for v1 — see [ADR 0001](docs/adr/0001-event-bus-technology.md) for the trade-off analysis (Kafka rejected as ops-heavy; NATS JetStream kept as the growth path).
+- Results DB: durable, queryable, the source of truth for history over time. Decided: embedded SQLite for v1 — see [ADR 0002](docs/adr/0002-results-db-technology.md) for the trade-off analysis (Postgres deferred as the documented growth path; a single results-recorder consumer is the only writer).
 
-### AI engine (narrowed scope)
-
-Single job only: given a flagged failure (new failure, or high flakiness score) from testAnalysisService, produce a human-readable explanation. It is explicitly **not**:
-
-- a general enrichment service wired into the main fan-out,
-- a peer of notificationService/loggingService/etc.,
-- required for testAnalysisService's core function (flakiness detection works without it). Treated as a phase-2 feature layered on top of a working intelligence layer, not a dependency of it.
-
-## Key learnings and principles (running list)
-
-- The moat is the intelligence layer, not execution — avoid spending design effort on infra plumbing that commoditizes the product.
-- Docker already handles local image caching; caching container **instances** is unnecessary.
-- Shell state doesn't persist across `exec_run` calls; only filesystem state does.
-- `StatusErrored` vs `StatusFailed` is an important semantic distinction for result aggregation.
-- Stderr is not reliably "the error"; stdout/stderr must be kept separate.
-- Deferred cleanup must use an independent context to avoid silent container leaks on timeout.
-- Schema fields should be minimal and orthogonal; validate contradictory combinations at parse time (enforced in `config.Validate`, which aggregates every violation).
-- Deferring `services`, network features, CVE scanning, and CLI is the right call to maintain focus on the intelligence layer.
-- Internal calls to odyssey-core go through its gRPC interface — not through a CLI, which is a human-facing convenience layered on top, built later.
-- The orchestrator is the gRPC **client**; the agent stays a passive, request/response executor (decided in gh-16). Agent-initiated registration/polling models were considered and rejected — nothing in the architecture needs an agent that dials out. Lifecycle concerns (heartbeats, retries, result streaming) belong to the orchestrator/event-bus side, tracked in gh-17 and gh-35.
+The end-to-end smoke for both sinks is `scripts/e2e-event-bus.sh` (see RUNBOOK §1.5).
 
 ## Roadmap
 
-### Near-term
-
-- Finish Go rewrite of odyssey-core (`internal/runner/docker.go`, `internal/domain/result.go` and friends).
-- Cross-step env var support via env-file convention.
-- Per-step timeouts, to bound long-running/non-terminating processes.
-- Stand up the Agent, talking to odyssey-core over gRPC.
-- Event bus + results DB split, with the fan-out consumers.
-- testAnalysisService v1: flakiness detection, test ownership.
-
 ### Mid-term
 
-- Odyssey UI + streaming.
 - `allowed_hosts` egress enforcement (DNS-filtering proxy; schema already settled, implementation deferred).
-- Pull-through registry proxy for efficient image management across runners (`registry:2`, Zot, or Harbor, backed by S3/GCS/R2); open question on rewriting image refs at orchestration time vs. Docker daemon `registry-mirrors`.
-- Artifacts and conditional job inclusion (flagged as high-priority by practitioner research).
 
 ### Later / explicitly deferred
 
 - `services` block: container-to-container networking, background processes.
 - DAG-based job dependencies.
-- AI engine (failure explanations).
-- CVE scan pre-execution gate.
-- CLI (`odyssey-cli`): `odyssey run`, `odyssey init`, `odyssey validate`.
 
 ## Tech stack
 
-- **Language**: Go (rewrite, 1.26+, uses `context.WithoutCancel`); Python + `uv` workspaces (original prototype).
+- **Language**: Go (1.26+, uses `context.WithoutCancel`).
 - **Containerization**: Docker SDK — long-running `tail -f /dev/null` container per job, `exec` for steps, `put_archive` for file copying.
-- **Python stack** (prototype phase): Pydantic, Typer, Loguru, Rich, pytest, Ruff. 57 tests, 100% coverage on unit-testable modules.
 - **Config format**: TOML (`.odyssey/pipeline.toml`, `.odyssey/env.toml`).
-- **Inter-service interface**: gRPC (odyssey-core's execution API).
+- **Interface**: gRPC (`api/v1/odyssey.proto`).
 - **Event bus**: Redis Streams (ADR 0001); evaluated against Kafka and NATS JetStream.
-- **Registry tooling**: `registry:2`, Zot, Harbor, backed by S3/GCS/R2 — decision open.
-- **Validation target**: a separate FastAPI bookstore API repo, used for real-world pipeline validation.
-
-## Open questions
-
-- Registry proxy: rewrite image references at orchestration time, or rely on Docker daemon `registry-mirrors`?
-- ~~Does `dataVizService` need direct results-DB query access on day one, or can it start off the event bus only?~~ Settled: yes, direct day-one access — see [ADR 0002](docs/adr/0002-results-db-technology.md).
-- Should `loggingService` persist to durable storage independently of the streaming layer, rather than only riding the ephemeral event bus? Partially settled: history lands in the results DB via the recorder (ADR 0002); whether loggingService additionally persists its own full-log store is still open.
-- CVE scan: informational surface only, or a hard build gate? This determines whether it needs a path back into the orchestrator's scheduling decision or just needs to publish findings.
+- **Results DB**: embedded SQLite (ADR 0002); Postgres documented as the growth path.
