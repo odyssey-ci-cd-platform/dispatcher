@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,8 +241,9 @@ func TestDockerRunnerInfraFailureDuringStepIsErrored(t *testing.T) {
 }
 
 // TestDockerRunnerCancelledStepReportsCancellation asserts a parent-context
-// cancellation mid-step is reported as cancelled — not as "timed out after
-// 0ms" (AUD-011).
+// cancellation mid-step stops the runner promptly — Run returns within a
+// small margin of the cancel, and the cancellation is reported as cancelled,
+// not as "timed out" (AUD-011; promptness gh-92, AUD-022).
 func TestDockerRunnerCancelledStepReportsCancellation(t *testing.T) {
 	r := requireDocker(t)
 	dir := t.TempDir()
@@ -249,33 +251,46 @@ func TestDockerRunnerCancelledStepReportsCancellation(t *testing.T) {
 	job := domain.Job{
 		Name:  "cancel-report",
 		Image: "alpine:latest",
-		Steps: []domain.Step{{Name: "hang", Run: "sleep 10"}},
+		Steps: []domain.Step{{Name: "hang", Run: "sleep 20"}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	sink := &recordingSink{}
+	defer cancel()
+	var cancelAt atomic.Int64
 	go func() {
-		// Cancel as soon as the step is actually running — a fixed delay
-		// races container startup under load (AUD-011).
+		// Cancel only once the sleep process is verifiably running: a fixed
+		// delay or the step-started event alone can land the cancel in the
+		// pre-step env-read exec instead of the step, proving nothing about
+		// interrupting a running exec (AUD-022).
 		deadline := time.After(30 * time.Second)
 		for {
-			for _, e := range sink.recorded() {
-				if e.Type == domain.EventStepStarted {
-					cancel()
-					return
-				}
+			if sleepRunning(t) {
+				cancelAt.Store(time.Now().UnixNano())
+				cancel()
+				return
 			}
 			select {
 			case <-deadline:
+				cancelAt.Store(time.Now().UnixNano())
 				cancel()
 				return
-			case <-time.After(20 * time.Millisecond):
+			case <-time.After(200 * time.Millisecond):
 			}
 		}
 	}()
 
-	result, err := r.Run(ctx, job, dir, sink)
+	result, err := r.Run(ctx, job, dir, nil)
+	cancel()
 	if err == nil {
 		t.Fatal("Run() expected an error when the run is cancelled, got nil")
+	}
+	cancelledAt := time.Unix(0, cancelAt.Load())
+	if cancelledAt.IsZero() {
+		t.Fatal("the run was never cancelled")
+	}
+	// Promptness is the point: the hung step must not keep Run blocked until
+	// the process exits on its own — sleep 20 would take ~20s.
+	if since := time.Since(cancelledAt); since > 5*time.Second {
+		t.Errorf("Run returned %v after cancellation, want within ~5s", since)
 	}
 	if len(result.StepResults) == 0 {
 		t.Fatal("expected the in-flight step result to be recorded")
@@ -287,6 +302,18 @@ func TestDockerRunnerCancelledStepReportsCancellation(t *testing.T) {
 	if strings.Contains(sr.Err.Error(), "timed out") {
 		t.Errorf("cancellation reported as a timeout: %v", sr.Err)
 	}
+}
+
+// sleepRunning reports whether a `sleep 20` process is live inside the
+// cancel-report test's container, found via the odyssey.job label.
+func sleepRunning(t *testing.T) bool {
+	t.Helper()
+	id, err := exec.Command("docker", "ps", "-q", "--filter", "label=odyssey.job=cancel-report").Output()
+	if err != nil || strings.TrimSpace(string(id)) == "" {
+		return false
+	}
+	out, err := exec.Command("docker", "exec", strings.TrimSpace(string(id)), "pgrep", "-f", "sleep 20").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func TestDockerRunnerRunEcho(t *testing.T) {
@@ -689,6 +716,10 @@ func TestDockerRunnerRunStepDuration(t *testing.T) {
 	}
 }
 
+// TestDockerRunnerRunStepTimeout asserts a step timeout stops the runner
+// promptly: Run returns within the timeout plus a small margin, the error
+// names the timeout, and output produced before the deadline is kept —
+// not discarded (gh-92, AUD-022).
 func TestDockerRunnerRunStepTimeout(t *testing.T) {
 	r := requireDocker(t)
 	dir := t.TempDir()
@@ -697,31 +728,36 @@ func TestDockerRunnerRunStepTimeout(t *testing.T) {
 		Name:  "timeout-test",
 		Image: "alpine:latest",
 		Steps: []domain.Step{
-			{Name: "slow", Run: "sleep 5", Timeout: 200},
+			{Name: "slow", Run: "echo partial-output && sleep 20", Timeout: 1000},
 		},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	start := time.Now()
 	result, err := r.Run(ctx, job, dir, nil)
+	elapsed := time.Since(start)
+
 	if err == nil {
 		t.Fatal("Run() expected an error for a step exceeding its timeout, got nil")
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("expected timeout error, got: %v", err)
 	}
+	// Promptness is the point: the hung step must not hold the runner until
+	// the process exits on its own — sleep 20 would take ~20s.
+	if elapsed > 5*time.Second {
+		t.Errorf("Run returned after %v, want within ~5s of the 1s timeout", elapsed)
+	}
 
-	// The timed-out step must surface as a failed step result, so the job
-	// reports Failed (never Pending).
+	// The timed-out step is still recorded, and output that arrived before
+	// the deadline survives.
 	if len(result.StepResults) != 1 {
-		t.Fatalf("expected 1 failed step result for a timed-out step, got %d", len(result.StepResults))
+		t.Fatalf("expected the timed-out step to be recorded, got %d step results", len(result.StepResults))
 	}
-	if result.StepResults[0].ExitCode != domain.ExitFailure {
-		t.Errorf("timed-out step ExitCode = %v, want ExitFailure", result.StepResults[0].ExitCode)
-	}
-	if result.Status() != domain.StatusFailed {
-		t.Errorf("Status() = %v, want StatusFailed", result.Status())
+	if got := result.StepResults[0].Stdout; !strings.Contains(got, "partial-output") {
+		t.Errorf("output received before the deadline was discarded, got %q", got)
 	}
 }
 
