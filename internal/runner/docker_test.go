@@ -683,16 +683,45 @@ func TestDockerRunnerRunExportedEnvReadError(t *testing.T) {
 			{Name: "remove env file", Run: `rm -f "$ODYSSEY_ENV_FILE"`},
 		},
 	}
+	sink := &recordingSink{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := r.Run(ctx, job, dir, nil)
+	result, err := r.Run(ctx, job, dir, sink)
 	if err == nil {
 		t.Fatal("Run() expected an error when the env file can't be read, got nil")
 	}
 	if result.Status() != domain.StatusErrored {
 		t.Errorf("expected StatusErrored, got %v", result.Status())
+	}
+
+	// The fault belongs to the step that just ran: it attaches to that
+	// step's existing result — no second result with the same name — and
+	// the step reports exactly one finished event, with the final status
+	// (gh-98, AUD-028).
+	if len(result.StepResults) != 1 {
+		t.Fatalf("expected 1 step result (fault attaches to the step), got %d", len(result.StepResults))
+	}
+	sr := result.StepResults[0]
+	if sr.ExitCode != domain.ExitSuccess {
+		t.Errorf("step ExitCode = %v, want ExitSuccess — the rm itself succeeded", sr.ExitCode)
+	}
+	if sr.Err == nil {
+		t.Fatal("expected the env-read fault on the step result")
+	}
+	finished := 0
+	for _, e := range sink.recorded() {
+		if e.Type != domain.EventStepFinished || e.Step != "remove env file" {
+			continue
+		}
+		finished++
+		if e.Payload["status"] != "errored" {
+			t.Errorf("finished payload status = %q, want errored", e.Payload["status"])
+		}
+	}
+	if finished != 1 {
+		t.Errorf("step emitted %d finished events, want exactly 1", finished)
 	}
 }
 
@@ -780,6 +809,19 @@ func TestDockerRunnerRunStepTimeout(t *testing.T) {
 	}
 	if got := result.StepResults[0].Stdout; !strings.Contains(got, "partial-output") {
 		t.Errorf("output received before the deadline was discarded, got %q", got)
+	}
+
+	// A timeout is not a process exit: no fabricated exit code, the timeout
+	// carried as the step's error, status Errored (gh-98, AUD-028).
+	sr := result.StepResults[0]
+	if sr.ExitCode != domain.ExitNone {
+		t.Errorf("timed-out step ExitCode = %v, want ExitNone", sr.ExitCode)
+	}
+	if sr.Err == nil || !strings.Contains(sr.Err.Error(), "timed out") {
+		t.Errorf("timed-out step Err = %v, want the timeout as the step's error", sr.Err)
+	}
+	if sr.Status() != domain.StatusErrored {
+		t.Errorf("timed-out step status = %v, want StatusErrored", sr.Status())
 	}
 }
 

@@ -51,6 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Timed-out steps report no fabricated exit code — `ExitNone` with the timeout as the step's error and status Errored — and an after-step env-file read fault attaches to that step's existing result instead of appending a duplicate (gh-98).
 - Jobs stop at the first non-zero step exit: later steps neither run nor emit events, mirroring the stage-level fail-fast rule (gh-93).
 - Step timeouts and run cancellations stop the running step promptly: the exec stream is closed so the runner no longer blocks in `stdcopy.StdCopy` until the process exits, and output received before the deadline is kept (gh-92).
 - Step results carry the real process exit code; non-zero exits are no longer reported as infrastructure errors, and infrastructure faults mid-step surface as `StatusErrored` (gh-65).
