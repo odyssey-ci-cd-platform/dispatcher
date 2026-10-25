@@ -192,19 +192,38 @@ func TestDockerRunnerInfraFailureDuringStepIsErrored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// The goroutine must not outlive this iteration's Run: with -count>1 a
+	// stale watcher would find the NEXT iteration's container (same label)
+	// and remove it before its exec starts — a self-inflicted failure.
+	done := make(chan struct{})
+	defer close(done)
+
 	go func() {
-		time.Sleep(2500 * time.Millisecond)
-		out, err := exec.Command("docker", "ps", "-aq", "--filter", "label=odyssey.job=infra-repro").Output()
-		if err != nil {
-			t.Logf("container listing failed (will re-check): %v", err)
-			return
-		}
-		for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		// The removal must land MID-STEP: before the exec starts, Run errors
+		// with no step results (setup fault), after the step exits it returns
+		// nil — both make this test fail spuriously. Each poll re-resolves the
+		// newest RUNNING container with the label: docker keeps a SIGKILLed
+		// container listed as running for a moment (visible with -count>1,
+		// where the previous iteration's dying container matches first), so
+		// the removal only fires once the step's own process answers pgrep
+		// inside the container resolved in that same pass.
+		for start := time.Now(); time.Since(start) < 30*time.Second; time.Sleep(100 * time.Millisecond) {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			out, err := exec.Command("docker", "ps", "-q", "--filter", "label=odyssey.job=infra-repro", "--latest").Output()
+			if err != nil {
+				continue
+			}
+			id := strings.TrimSpace(string(out))
 			if id == "" {
 				continue
 			}
-			if rmErr := exec.Command("docker", "rm", "-f", id).Run(); rmErr != nil {
-				t.Logf("container removal failed (will re-check): %v", rmErr)
+			if err := exec.Command("docker", "exec", id, "pgrep", "-f", "sleep 10").Run(); err == nil {
+				_ = exec.Command("docker", "rm", "-f", id).Run()
+				return
 			}
 		}
 	}()
