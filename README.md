@@ -22,6 +22,7 @@ Platform-level design is maintained outside this repository, currently as `odyss
 - Prefer direct, slightly repetitive call sites over an abstraction that doesn't earn its weight.
 - Schema fields should be minimal and orthogonal; contradictory combinations get rejected at validation time, not silently accepted.
 - Fail-fast between stages: the first Failed or Errored stage ends the run, and later stages are skipped — recorded decision (gh-82, AUD-015).
+- Fail-fast within a job: the first non-zero step exit ends the job, and later steps do not run — recorded decision (gh-93, AUD-023).
 
 ## Architecture
 

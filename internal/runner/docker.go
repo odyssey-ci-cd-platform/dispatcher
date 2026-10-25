@@ -279,6 +279,14 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 		stepResults = append(stepResults, stepRes)
 		r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 
+		// Fail-fast within a job: the first non-zero exit ends it, mirroring
+		// the stage-level fail-fast rule (gh-82) — nothing may run against
+		// code that just failed (AUD-023). A process exit is a result, not
+		// an error (AUD-003), so the run error stays nil.
+		if stepRes.ExitCode != domain.ExitSuccess {
+			return stepResults, nil
+		}
+
 		// Surface which vars this step exported for later steps. Values are
 		// omitted since they may hold secrets; a future UI can show them.
 		after, err := r.readExportedEnv(ctx, containerID)
