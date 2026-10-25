@@ -65,5 +65,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Documentation drift repaired: stale `README.org` removed, README corrected (`.odyssey` path, `StatusErrored`, the actual container model, Go 1.26, decision-first event-bus wording), and the example documents step timeouts (gh-81).
 - The agent rulebook (`AGENTS.md`, `.agents/`) is version-controlled and CI runs the docs check on every PR; the checker now counts violations (it previously printed findings but always exited zero) and skips YAML frontmatter (gh-83).
 ### Security
+- Upgraded `golang.org/x/net` to v0.60.0, closing four HTTP/2 denial-of-service vulnerabilities reachable from the gRPC server (GO-2026-6617, GO-2026-6612, GO-2026-6611, GO-2026-6603) (gh-97).
 - The gRPC server binds localhost by default, honors a verbatim `ODYSSEY_ADDR`, and confines `project_path` under `ODYSSEY_PROJECT_ROOT` when set (gh-74).
 
