@@ -590,3 +590,77 @@ steps = []
 		})
 	}
 }
+
+// TestLoadRejectsDuplicateStepNames asserts two steps with the same name
+// in one job fail validation: the results store keys steps on
+// (job_id, name), so a later duplicate would overwrite the earlier row and
+// erase its recorded outcome (AUD-025).
+func TestLoadRejectsDuplicateStepNames(t *testing.T) {
+	tests := []struct {
+		name         string
+		pipelineTOML string
+		wantErr      bool
+		errContains  []string
+	}{
+		{
+			name: "two steps with the same name in one job",
+			pipelineTOML: strings.TrimSpace(`
+[pipeline]
+name = "ci"
+stages = ["test"]
+
+[jobs.unit]
+stage = "test"
+image = "alpine:latest"
+steps = [
+  { name = "test", run = "exit 1" },
+  { name = "test", run = "echo passed" },
+]
+`),
+			wantErr:     true,
+			errContains: []string{"duplicate step name", `"test"`},
+		},
+		{
+			name: "same step name in different jobs is valid",
+			pipelineTOML: strings.TrimSpace(`
+[pipeline]
+name = "ci"
+stages = ["test"]
+
+[jobs.unit]
+stage = "test"
+image = "alpine:latest"
+steps = [{ name = "test", run = "go test ./..." }]
+
+[jobs.lint]
+stage = "test"
+image = "alpine:latest"
+steps = [{ name = "test", run = "go vet ./..." }]
+`),
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeOdysseyConfig(t, dir, tt.pipelineTOML, "")
+
+			_, err := config.Load(dir)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("Load() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Load() succeeded unexpectedly")
+			}
+			for _, want := range tt.errContains {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Load() error = %v, want error containing %q", err, want)
+				}
+			}
+		})
+	}
+}

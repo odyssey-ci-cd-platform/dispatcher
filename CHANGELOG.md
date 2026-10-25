@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Steps rows in the results database carry started/finished timestamps and error text (gh-95).
 - Second recorded repository audit, evaluated at ed81aa0 (gh-90).
 - Results recording: with the bus enabled, the server runs an in-process `results-recorder` consumer — the only writer of the embedded SQLite results database (`ODYSSEY_RESULTS_DB`, default `odyssey-results.db`), WAL mode, migrations applied on startup, idempotent under at-least-once redelivery; events missing run identity dead-letter (gh-85).
 - `internal/results`: SQLite store behind goose embedded migrations with normalized `runs`/`jobs`/`steps` and a JSON payload column reserved on `steps` (gh-85).
@@ -51,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Results events whose run, job, or step row is missing fail loudly and dead-letter instead of acking a silently lost final status (gh-95).
+- Duplicate step names within a job are rejected at pipeline validation, where a later duplicate previously overwrote the earlier step's recorded outcome (gh-95).
 - Step results carry the real process exit code; non-zero exits are no longer reported as infrastructure errors, and infrastructure faults mid-step surface as `StatusErrored` (gh-65).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).
