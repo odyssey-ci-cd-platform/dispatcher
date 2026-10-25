@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Second recorded repository audit, evaluated at ed81aa0 (gh-90).
 - Results recording: with the bus enabled, the server runs an in-process `results-recorder` consumer — the only writer of the embedded SQLite results database (`ODYSSEY_RESULTS_DB`, default `odyssey-results.db`), WAL mode, migrations applied on startup, idempotent under at-least-once redelivery; events missing run identity dead-letter (gh-85).
 - `internal/results`: SQLite store behind goose embedded migrations with normalized `runs`/`jobs`/`steps` and a JSON payload column reserved on `steps` (gh-85).
 - Lifecycle events carry a run ID and finished events survive run cancellation (gh-67).
