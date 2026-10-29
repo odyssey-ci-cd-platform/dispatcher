@@ -48,7 +48,16 @@ func CreateTar(path string) ([]byte, error) {
 			return err
 		}
 
-		header, err := tar.FileInfoHeader(info, "")
+		// FileInfoHeader's second argument is the link target; an empty one
+		// makes every symlink arrive broken (AUD-029).
+		linkname := ""
+		if info.Mode()&fs.ModeSymlink != 0 {
+			linkname, err = os.Readlink(file)
+			if err != nil {
+				return err
+			}
+		}
+		header, err := tar.FileInfoHeader(info, linkname)
 		if err != nil {
 			return err
 		}

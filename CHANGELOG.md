@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Preserved symlink targets in project archives, so symlinks like `node_modules/.bin` no longer arrive broken inside the container (gh-99).
 - Results events whose run, job, or step row is missing fail loudly and dead-letter instead of acking a silently lost final status (gh-95).
 - Duplicate step names within a job are rejected at pipeline validation, where a later duplicate previously overwrote the earlier step's recorded outcome (gh-95).
 - Timed-out steps report no fabricated exit code — `ExitNone` with the timeout as the step's error and status Errored — and an after-step env-file read fault attaches to that step's existing result instead of appending a duplicate (gh-98).
