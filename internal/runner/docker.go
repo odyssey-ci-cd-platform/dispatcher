@@ -263,9 +263,11 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 			return stepResults, ctx.Err()
 		case runErr != nil && step.Timeout > 0 && errors.Is(runErr, context.DeadlineExceeded):
+			// A timeout is not a process exit: no exit code, and the timeout
+			// is the step's own error, which ranks the step Errored (AUD-028).
 			timeoutErr := fmt.Errorf("step %s timed out after %dms", step.Name, step.Timeout)
 			r.loggerFromCtx(ctx).Error(timeoutErr.Error())
-			stepRes.ExitCode = domain.ExitFailure
+			stepRes.Err = timeoutErr
 			stepResults = append(stepResults, stepRes)
 			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 			return stepResults, timeoutErr
@@ -305,24 +307,25 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 			return stepResults, nil
 		}
 
-		r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
-
 		// Surface which vars this step exported for later steps. Values are
 		// omitted since they may hold secrets; a future UI can show them.
+		// The finished event is emitted only after this read, so a read fault
+		// lands in that single event with the final status (AUD-028).
 		after, err := r.readExportedEnv(ctx, containerID)
 		if err != nil {
-			stepResults = append(stepResults, domain.StepResult{
-				StepName: step.Name,
-				ExitCode: domain.ExitNone,
-				Err:      err,
-				Duration: time.Since(stepStartTime),
-			})
-			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepResults[len(stepResults)-1]))
-			return stepResults, fmt.Errorf("failed to read exported env after step %q: %w", step.Name, err)
+			// The fault belongs to the step that just ran: attach it to that
+			// step's existing result instead of appending a second result
+			// with the same name (AUD-028).
+			stepRes.Err = fmt.Errorf("failed to read exported env after step %q: %w", step.Name, err)
+			stepResults[len(stepResults)-1] = stepRes
+			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+			return stepResults, stepRes.Err
 		}
 		if keys := newlyExportedKeys(exported, after); len(keys) > 0 {
 			r.loggerFromCtx(ctx).Info("step exported env vars", "step", step.Name, "keys", keys)
 		}
+
+		r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 	}
 	return stepResults, nil
 }
