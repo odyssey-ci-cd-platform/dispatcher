@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The infrastructure-failure repro test no longer races its own container removal and fails spuriously under `-count` repetition: the watcher re-resolves the newest running container each poll and removes it only once the step's process answers `pgrep` inside it.
 
 ### Added
+- Steps rows in the results database carry started/finished timestamps and error text (gh-95).
 - Second recorded repository audit, evaluated at ed81aa0 (gh-90).
 - Results recording: with the bus enabled, the server runs an in-process `results-recorder` consumer — the only writer of the embedded SQLite results database (`ODYSSEY_RESULTS_DB`, default `odyssey-results.db`), WAL mode, migrations applied on startup, idempotent under at-least-once redelivery; events missing run identity dead-letter (gh-85).
 - `internal/results`: SQLite store behind goose embedded migrations with normalized `runs`/`jobs`/`steps` and a JSON payload column reserved on `steps` (gh-85).
@@ -54,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Results events whose run, job, or step row is missing fail loudly and dead-letter instead of acking a silently lost final status (gh-95).
+- Duplicate step names within a job are rejected at pipeline validation, where a later duplicate previously overwrote the earlier step's recorded outcome (gh-95).
 - Timed-out steps report no fabricated exit code — `ExitNone` with the timeout as the step's error and status Errored — and an after-step env-file read fault attaches to that step's existing result instead of appending a duplicate (gh-98).
 - Jobs stop at the first non-zero step exit: later steps neither run nor emit events, mirroring the stage-level fail-fast rule (gh-93).
 - Step timeouts and run cancellations stop the running step promptly: the exec stream is closed so the runner no longer blocks in `stdcopy.StdCopy` until the process exits, and output received before the deadline is kept (gh-92).
