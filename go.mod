@@ -1,6 +1,6 @@
 module github.com/odyssey-ci-cd-platform/dispatcher
 
-go 1.26.4
+go 1.26.10
 
 require (
 	github.com/BurntSushi/toml v1.6.0
