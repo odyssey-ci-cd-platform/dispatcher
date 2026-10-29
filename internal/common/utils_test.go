@@ -60,6 +60,42 @@ func TestCreateTar(t *testing.T) {
 		}
 	})
 
+	t.Run("preserves symlink targets", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "real.txt"), []byte("payload"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("real.txt", filepath.Join(dir, "link.txt")); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := common.CreateTar(dir)
+		if err != nil {
+			t.Fatalf("CreateTar() unexpected error: %v", err)
+		}
+
+		for _, tc := range []struct {
+			name     string
+			wantType byte
+			wantLink string
+			wantBody string
+		}{
+			{name: "real.txt", wantType: tar.TypeReg, wantBody: "payload"},
+			{name: "link.txt", wantType: tar.TypeSymlink, wantLink: "real.txt"},
+		} {
+			hdr, body := readTarEntry(t, got, tc.name)
+			if hdr.Typeflag != tc.wantType {
+				t.Errorf("%s: type = %c, want %c", tc.name, hdr.Typeflag, tc.wantType)
+			}
+			if hdr.Linkname != tc.wantLink {
+				t.Errorf("%s: Linkname = %q, want %q", tc.name, hdr.Linkname, tc.wantLink)
+			}
+			if string(body) != tc.wantBody {
+				t.Errorf("%s: content = %q, want %q", tc.name, string(body), tc.wantBody)
+			}
+		}
+	})
+
 	t.Run("missing path returns error", func(t *testing.T) {
 		_, err := common.CreateTar(filepath.Join(t.TempDir(), "does-not-exist"))
 		if err == nil {
@@ -84,4 +120,27 @@ func readTarNames(t *testing.T, archive []byte) []string {
 		names = append(names, hdr.Name)
 	}
 	return names
+}
+
+// readTarEntry returns the header and content of the named entry in a tar archive.
+func readTarEntry(t *testing.T, archive []byte, name string) (*tar.Header, []byte) {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			t.Fatalf("archive has no %q entry", name)
+		}
+		if err != nil {
+			t.Fatalf("reading archive: %v", err)
+		}
+		if hdr.Name != name {
+			continue
+		}
+		body, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("reading %q content: %v", name, err)
+		}
+		return hdr, body
+	}
 }
