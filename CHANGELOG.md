@@ -77,5 +77,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The agent rulebook (`AGENTS.md`, `.agents/`) is version-controlled and CI runs the docs check on every PR; the checker now counts violations (it previously printed findings but always exited zero) and skips YAML frontmatter (gh-83).
 ### Security
 - Upgraded `golang.org/x/net` to v0.60.0, closing four HTTP/2 denial-of-service vulnerabilities reachable from the gRPC server (GO-2026-6617, GO-2026-6612, GO-2026-6611, GO-2026-6603) (gh-97).
+- Moved the build and CI toolchain to go1.26.10, clearing the fifteen reachable standard-library vulnerabilities govulncheck reported at go1.26.4 (gh-105).
 - The gRPC server binds localhost by default, honors a verbatim `ODYSSEY_ADDR`, and confines `project_path` under `ODYSSEY_PROJECT_ROOT` when set (gh-74).
 
