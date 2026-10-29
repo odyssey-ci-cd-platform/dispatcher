@@ -11,7 +11,7 @@ require (
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/redis/go-redis/v9 v9.22.0
 	golang.org/x/sync v0.23.0
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.60.1
 )
