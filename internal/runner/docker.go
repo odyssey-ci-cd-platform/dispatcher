@@ -283,8 +283,26 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 		// Fail-fast within a job: the first non-zero exit ends it, mirroring
 		// the stage-level fail-fast rule (gh-82) — nothing may run against
 		// code that just failed (AUD-023). A process exit is a result, not
-		// an error (AUD-003), so the run error stays nil.
+		// an error (AUD-003), so the run error stays nil — unless the
+		// container died under the step: then the exit code is not the
+		// step's own result and the job is Errored, not Failed (AUD-003).
 		if stepRes.ExitCode != domain.ExitSuccess {
+			// The exit is only the step's own result if the container is
+			// still alive to have delivered it: probe with the same
+			// readExportedEnv exec every successful step runs — the daemon
+			// refuses to create an exec on a container whose process death
+			// it already processed, so a probe failure means the container
+			// died under the step and the job is Errored, not Failed
+			// (AUD-003).
+			if _, err := r.readExportedEnv(ctx, containerID); err != nil {
+				infraErr := fmt.Errorf("container %s unreachable after step %q exited with %d: %w", shortID(containerID), step.Name, stepRes.ExitCode, err)
+				r.loggerFromCtx(ctx).Error(infraErr.Error())
+				stepRes.ExitCode = domain.ExitNone
+				stepRes.Err = infraErr
+				stepResults[len(stepResults)-1] = stepRes
+				r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+				return stepResults, infraErr
+			}
 			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 			return stepResults, nil
 		}
