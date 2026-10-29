@@ -23,8 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- The infrastructure-failure repro test no longer races its own container removal and fails spuriously under `-count` repetition: the watcher re-resolves the newest running container each poll and removes it only once the step's process answers `pgrep` inside it.
+
 ### Added
 - CI runs the race detector and govulncheck, Dependabot updates gomod and github-actions dependencies weekly, and the check workflow runs with `permissions: contents: read` (gh-105).
+- Steps rows in the results database carry started/finished timestamps and error text (gh-95).
 - Second recorded repository audit, evaluated at ed81aa0 (gh-90).
 - Results recording: with the bus enabled, the server runs an in-process `results-recorder` consumer — the only writer of the embedded SQLite results database (`ODYSSEY_RESULTS_DB`, default `odyssey-results.db`), WAL mode, migrations applied on startup, idempotent under at-least-once redelivery; events missing run identity dead-letter (gh-85).
 - `internal/results`: SQLite store behind goose embedded migrations with normalized `runs`/`jobs`/`steps` and a JSON payload column reserved on `steps` (gh-85).
@@ -52,6 +56,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Preserved symlink targets in project archives, so symlinks like `node_modules/.bin` no longer arrive broken inside the container (gh-99).
+- Results events whose run, job, or step row is missing fail loudly and dead-letter instead of acking a silently lost final status (gh-95).
+- Duplicate step names within a job are rejected at pipeline validation, where a later duplicate previously overwrote the earlier step's recorded outcome (gh-95).
+- Timed-out steps report no fabricated exit code — `ExitNone` with the timeout as the step's error and status Errored — and an after-step env-file read fault attaches to that step's existing result instead of appending a duplicate (gh-98).
+- Jobs stop at the first non-zero step exit: later steps neither run nor emit events, mirroring the stage-level fail-fast rule (gh-93).
+- Step timeouts and run cancellations stop the running step promptly: the exec stream is closed so the runner no longer blocks in `stdcopy.StdCopy` until the process exits, and output received before the deadline is kept (gh-92).
 - Step results carry the real process exit code; non-zero exits are no longer reported as infrastructure errors, and infrastructure faults mid-step surface as `StatusErrored` (gh-65).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).
@@ -66,5 +76,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Documentation drift repaired: stale `README.org` removed, README corrected (`.odyssey` path, `StatusErrored`, the actual container model, Go 1.26, decision-first event-bus wording), and the example documents step timeouts (gh-81).
 - The agent rulebook (`AGENTS.md`, `.agents/`) is version-controlled and CI runs the docs check on every PR; the checker now counts violations (it previously printed findings but always exited zero) and skips YAML frontmatter (gh-83).
 ### Security
+- Upgraded `golang.org/x/net` to v0.60.0, closing four HTTP/2 denial-of-service vulnerabilities reachable from the gRPC server (GO-2026-6617, GO-2026-6612, GO-2026-6611, GO-2026-6603) (gh-97).
 - The gRPC server binds localhost by default, honors a verbatim `ODYSSEY_ADDR`, and confines `project_path` under `ODYSSEY_PROJECT_ROOT` when set (gh-74).
 

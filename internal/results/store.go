@@ -111,13 +111,13 @@ func (s *Store) recordPipelineStarted(ctx context.Context, event domain.Event) e
 }
 
 func (s *Store) recordPipelineFinished(ctx context.Context, event domain.Event) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE runs SET status = ?, finished_at = ? WHERE run_id = ?`,
 		event.Payload["status"], stamp(event.OccurredAt), event.RunID)
 	if err != nil {
 		return fmt.Errorf("results: finish run %s: %w", event.RunID, err)
 	}
-	return nil
+	return requireRowAffected(res, "results: pipeline.finished references unknown run %q", event.RunID)
 }
 
 func (s *Store) recordJobStarted(ctx context.Context, event domain.Event) error {
@@ -140,13 +140,13 @@ func (s *Store) recordJobFinished(ctx context.Context, event domain.Event) error
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE jobs SET status = ?, finished_at = ? WHERE run_id = ? AND name = ?`,
 		event.Payload["status"], stamp(event.OccurredAt), runRow, event.Job)
 	if err != nil {
 		return fmt.Errorf("results: finish job %s/%s: %w", event.RunID, event.Job, err)
 	}
-	return nil
+	return requireRowAffected(res, "results: job.finished references unknown job %q in run %q", event.Job, event.RunID)
 }
 
 func (s *Store) recordStepStarted(ctx context.Context, event domain.Event) error {
@@ -155,9 +155,9 @@ func (s *Store) recordStepStarted(ctx context.Context, event domain.Event) error
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO steps (job_id, name, status) VALUES (?, ?, ?)
+		`INSERT INTO steps (job_id, name, status, started_at) VALUES (?, ?, ?, ?)
 		 ON CONFLICT (job_id, name) DO NOTHING`,
-		jobRow, event.Step, domain.StatusPending.String())
+		jobRow, event.Step, domain.StatusPending.String(), stamp(event.OccurredAt))
 	if err != nil {
 		return fmt.Errorf("results: record step %s/%s/%s: %w", event.RunID, event.Job, event.Step, err)
 	}
@@ -169,9 +169,9 @@ func (s *Store) recordStepFinished(ctx context.Context, event domain.Event) erro
 	if err != nil {
 		return err
 	}
-	// A step whose process never produced an exit code (ExitNone) records
-	// NULL, not a sentinel value.
-	var exitCode, duration any
+	// A step whose process never produced an exit code records NULL exit_code,
+	// and one whose payload carries no error text records NULL error.
+	var exitCode, duration, stepErr any
 	if raw, ok := event.Payload["exit_code"]; ok {
 		code, err := strconv.Atoi(raw)
 		if err != nil {
@@ -186,11 +186,29 @@ func (s *Store) recordStepFinished(ctx context.Context, event domain.Event) erro
 		}
 		duration = ms
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE steps SET status = ?, exit_code = ?, duration_ms = ? WHERE job_id = ? AND name = ?`,
-		event.Payload["status"], exitCode, duration, jobRow, event.Step)
+	if raw, ok := event.Payload["error"]; ok {
+		stepErr = raw
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE steps SET status = ?, exit_code = ?, duration_ms = ?, finished_at = ?, error = ? WHERE job_id = ? AND name = ?`,
+		event.Payload["status"], exitCode, duration, stamp(event.OccurredAt), stepErr, jobRow, event.Step)
 	if err != nil {
 		return fmt.Errorf("results: finish step %s/%s/%s: %w", event.RunID, event.Job, event.Step, err)
+	}
+	return requireRowAffected(res, "results: step.finished references unknown step %q in job %q of run %q", event.Step, event.Job, event.RunID)
+}
+
+// requireRowAffected fails the event when its UPDATE matched no row: an
+// event whose parent is unknown must error out (dead-lettering loudly per
+// the at-least-once contract) instead of acking a silently lost status
+// (AUD-025, ADR 0002 decision 4).
+func requireRowAffected(res sql.Result, errMsg string, args ...any) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(errMsg+": %w", append(args, err)...)
+	}
+	if n == 0 {
+		return fmt.Errorf(errMsg, args...)
 	}
 	return nil
 }
