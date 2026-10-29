@@ -316,6 +316,47 @@ func sleepRunning(t *testing.T) bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
+// TestDockerRunnerStopsJobAfterFailingStep asserts the job stops at the
+// first non-zero step exit: the step after a failing one neither runs nor
+// emits events — in-job fail-fast, mirroring the stage-level rule (gh-93,
+// AUD-023).
+func TestDockerRunnerStopsJobAfterFailingStep(t *testing.T) {
+	r := requireDocker(t)
+	dir := t.TempDir()
+
+	job := domain.Job{
+		Name:  "fail-fast-test",
+		Image: "alpine:latest",
+		Steps: []domain.Step{
+			{Name: "test", Run: "exit 3"},
+			{Name: "deploy", Run: "echo deployed"},
+		},
+	}
+	sink := &recordingSink{}
+
+	result, err := r.Run(context.Background(), job, dir, sink)
+	// A process exit is a result, not a run error (AUD-003).
+	if err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if result.Status() != domain.StatusFailed {
+		t.Errorf("Status() = %v, want StatusFailed", result.Status())
+	}
+
+	// Only the failing step is recorded; the deploy step never ran.
+	if len(result.StepResults) != 1 {
+		t.Fatalf("expected 1 step result (job stops at the failure), got %d", len(result.StepResults))
+	}
+	if got := result.StepResults[0].ExitCode; got != domain.ExitCode(3) {
+		t.Errorf("first step exit code = %v, want 3", got)
+	}
+	for _, e := range sink.recorded() {
+		if e.Step == "deploy" {
+			t.Errorf("step after the failure emitted event %q", e.Type)
+		}
+	}
+}
+
 func TestDockerRunnerRunEcho(t *testing.T) {
 	r := requireDocker(t)
 	dir := t.TempDir()
