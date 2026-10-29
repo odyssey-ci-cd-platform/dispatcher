@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- The infrastructure-failure repro test no longer races its own container removal and fails spuriously under `-count` repetition: the watcher re-resolves the newest running container each poll and removes it only once the step's process answers `pgrep` inside it.
+
 ### Added
 - Second recorded repository audit, evaluated at ed81aa0 (gh-90).
 - Results recording: with the bus enabled, the server runs an in-process `results-recorder` consumer — the only writer of the embedded SQLite results database (`ODYSSEY_RESULTS_DB`, default `odyssey-results.db`), WAL mode, migrations applied on startup, idempotent under at-least-once redelivery; events missing run identity dead-letter (gh-85).
@@ -51,6 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `make check` enforces gofmt cleanliness and module tidiness alongside vet and tests (gh-78).
 
 ### Fixed
+- Step timeouts and run cancellations stop the running step promptly: the exec stream is closed so the runner no longer blocks in `stdcopy.StdCopy` until the process exits, and output received before the deadline is kept (gh-92).
 - Step results carry the real process exit code; non-zero exits are no longer reported as infrastructure errors, and infrastructure faults mid-step surface as `StatusErrored` (gh-65).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).
 - Status aggregation ranks every status explicitly; Running, Skipped, and Unknown no longer rank as Passed (gh-72).

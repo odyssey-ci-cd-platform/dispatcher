@@ -238,8 +238,8 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 			stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.Timeout)*time.Millisecond)
 		}
 
-		// execCommand honors its context, so a step deadline or a run
-		// cancellation surfaces as its error — no goroutine needed (AUD-011).
+		// execCommand honors its context: a step deadline or a run
+		// cancellation interrupts the exec and surfaces as its error (AUD-022).
 		exitCode, stdout, stderr, runErr := r.execCommand(stepCtx, containerID, step.Run, envSlice(exported))
 		if cancel != nil {
 			cancel()
@@ -366,14 +366,34 @@ func (r *DockerRunner) execCommand(ctx context.Context, containerID string, comm
 	}
 	defer resp.Close()
 
+	// StdCopy blocks on the hijacked stream until the process exits and
+	// cannot be interrupted by the context, so the copy runs aside and a
+	// context done closes the stream — the only way to unblock the read.
+	// The exec itself keeps running; Run's teardown removes the container
+	// and nothing waits on the process (AUD-022).
 	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
-		return domain.ExitNone, "", "", err
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+		copyDone <- err
+	}()
+
+	select {
+	case copyErr := <-copyDone:
+		if copyErr != nil {
+			// The stream broke (e.g. the container vanished) — keep whatever
+			// output arrived before the break.
+			return domain.ExitNone, stdout.String(), stderr.String(), copyErr
+		}
+	case <-ctx.Done():
+		resp.Close()
+		<-copyDone
+		return domain.ExitNone, stdout.String(), stderr.String(), ctx.Err()
 	}
 
 	inspect, err := r.client.ExecInspect(ctx, execID, client.ExecInspectOptions{})
 	if err != nil {
-		return domain.ExitNone, "", "", err
+		return domain.ExitNone, stdout.String(), stderr.String(), err
 	}
 
 	// A non-zero exit is the process's own result, not an infrastructure
