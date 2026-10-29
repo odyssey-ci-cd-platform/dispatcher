@@ -238,8 +238,8 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 			stepCtx, cancel = context.WithTimeout(ctx, time.Duration(step.Timeout)*time.Millisecond)
 		}
 
-		// execCommand honors its context, so a step deadline or a run
-		// cancellation surfaces as its error — no goroutine needed (AUD-011).
+		// execCommand honors its context: a step deadline or a run
+		// cancellation interrupts the exec and surfaces as its error (AUD-022).
 		exitCode, stdout, stderr, runErr := r.execCommand(stepCtx, containerID, step.Run, envSlice(exported))
 		if cancel != nil {
 			cancel()
@@ -263,9 +263,11 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 			return stepResults, ctx.Err()
 		case runErr != nil && step.Timeout > 0 && errors.Is(runErr, context.DeadlineExceeded):
+			// A timeout is not a process exit: no exit code, and the timeout
+			// is the step's own error, which ranks the step Errored (AUD-028).
 			timeoutErr := fmt.Errorf("step %s timed out after %dms", step.Name, step.Timeout)
 			r.loggerFromCtx(ctx).Error(timeoutErr.Error())
-			stepRes.ExitCode = domain.ExitFailure
+			stepRes.Err = timeoutErr
 			stepResults = append(stepResults, stepRes)
 			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 			return stepResults, timeoutErr
@@ -277,24 +279,53 @@ func (r *DockerRunner) runSteps(ctx context.Context, containerID string, job dom
 		}
 
 		stepResults = append(stepResults, stepRes)
-		r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+
+		// Fail-fast within a job: the first non-zero exit ends it, mirroring
+		// the stage-level fail-fast rule (gh-82) — nothing may run against
+		// code that just failed (AUD-023). A process exit is a result, not
+		// an error (AUD-003), so the run error stays nil — unless the
+		// container died under the step: then the exit code is not the
+		// step's own result and the job is Errored, not Failed (AUD-003).
+		if stepRes.ExitCode != domain.ExitSuccess {
+			// The exit is only the step's own result if the container is
+			// still alive to have delivered it: probe with the same
+			// readExportedEnv exec every successful step runs — the daemon
+			// refuses to create an exec on a container whose process death
+			// it already processed, so a probe failure means the container
+			// died under the step and the job is Errored, not Failed
+			// (AUD-003).
+			if _, err := r.readExportedEnv(ctx, containerID); err != nil {
+				infraErr := fmt.Errorf("container %s unreachable after step %q exited with %d: %w", shortID(containerID), step.Name, stepRes.ExitCode, err)
+				r.loggerFromCtx(ctx).Error(infraErr.Error())
+				stepRes.ExitCode = domain.ExitNone
+				stepRes.Err = infraErr
+				stepResults[len(stepResults)-1] = stepRes
+				r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+				return stepResults, infraErr
+			}
+			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+			return stepResults, nil
+		}
 
 		// Surface which vars this step exported for later steps. Values are
 		// omitted since they may hold secrets; a future UI can show them.
+		// The finished event is emitted only after this read, so a read fault
+		// lands in that single event with the final status (AUD-028).
 		after, err := r.readExportedEnv(ctx, containerID)
 		if err != nil {
-			stepResults = append(stepResults, domain.StepResult{
-				StepName: step.Name,
-				ExitCode: domain.ExitNone,
-				Err:      err,
-				Duration: time.Since(stepStartTime),
-			})
-			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepResults[len(stepResults)-1]))
-			return stepResults, fmt.Errorf("failed to read exported env after step %q: %w", step.Name, err)
+			// The fault belongs to the step that just ran: attach it to that
+			// step's existing result instead of appending a second result
+			// with the same name (AUD-028).
+			stepRes.Err = fmt.Errorf("failed to read exported env after step %q: %w", step.Name, err)
+			stepResults[len(stepResults)-1] = stepRes
+			r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
+			return stepResults, stepRes.Err
 		}
 		if keys := newlyExportedKeys(exported, after); len(keys) > 0 {
 			r.loggerFromCtx(ctx).Info("step exported env vars", "step", step.Name, "keys", keys)
 		}
+
+		r.emitStep(ctx, events, stepFinishedEvent(job.Name, stepRes))
 	}
 	return stepResults, nil
 }
@@ -366,14 +397,34 @@ func (r *DockerRunner) execCommand(ctx context.Context, containerID string, comm
 	}
 	defer resp.Close()
 
+	// StdCopy blocks on the hijacked stream until the process exits and
+	// cannot be interrupted by the context, so the copy runs aside and a
+	// context done closes the stream — the only way to unblock the read.
+	// The exec itself keeps running; Run's teardown removes the container
+	// and nothing waits on the process (AUD-022).
 	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
-		return domain.ExitNone, "", "", err
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+		copyDone <- err
+	}()
+
+	select {
+	case copyErr := <-copyDone:
+		if copyErr != nil {
+			// The stream broke (e.g. the container vanished) — keep whatever
+			// output arrived before the break.
+			return domain.ExitNone, stdout.String(), stderr.String(), copyErr
+		}
+	case <-ctx.Done():
+		resp.Close()
+		<-copyDone
+		return domain.ExitNone, stdout.String(), stderr.String(), ctx.Err()
 	}
 
 	inspect, err := r.client.ExecInspect(ctx, execID, client.ExecInspectOptions{})
 	if err != nil {
-		return domain.ExitNone, "", "", err
+		return domain.ExitNone, stdout.String(), stderr.String(), err
 	}
 
 	// A non-zero exit is the process's own result, not an infrastructure

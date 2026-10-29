@@ -76,10 +76,16 @@ func (root RootConfig) Validate() error {
 		if len(job.Steps) == 0 {
 			errs = append(errs, fmt.Errorf("job %q: must define at least one step", jobName))
 		}
+		stepNames := make(map[string]bool)
 		for stepNumber, step := range job.Steps {
 			if step.Name == "" {
 				errs = append(errs, fmt.Errorf("job %q: step %d: name must not be empty", jobName, stepNumber+1))
+			} else if stepNames[step.Name] {
+				// Steps are stored unique on (job_id, name); a later duplicate
+				// would overwrite the earlier row and erase its outcome (AUD-025).
+				errs = append(errs, fmt.Errorf("job %q: duplicate step name: %q", jobName, step.Name))
 			}
+			stepNames[step.Name] = true
 			if step.Run == "" {
 				errs = append(errs, fmt.Errorf("job %q: step %d (%q): run must not be empty", jobName, stepNumber+1, step.Name))
 			}
